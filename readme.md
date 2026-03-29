@@ -1,33 +1,85 @@
 # SINADEF Scrapper
 
 ## Qué hace `script.py`
-- Lee `sinadef.csv` por chunks para ahorrar RAM.
+- Lee `sinadef.csv` en streaming (fila a fila) para ahorrar RAM.
 - Genera `historic.csv` con todos los registros donde `MUERTE_VIOLENTA == HOMICIDIO`.
 - Genera `2026.csv` con los homicidios donde `ANIO == 2026`.
 - En cada ejecución elimina los CSV de salida previos para evitar duplicados.
+- Limpia bytes `NULL` y detecta cabecera/delimitador de forma robusta.
 
 ## Plan de despliegue en Namecheap Shared (Python 3.6.15)
 
 ### 1. Preparar estructura en hosting
-1. En cPanel, crea una carpeta del proyecto, por ejemplo `~/sinadef-scrapper/`.
+1. En cPanel, crea una carpeta del proyecto, por ejemplo `~/sinadef_scrapper/`.
 2. Sube `script.py` y `sinadef.csv` a esa carpeta (File Manager o SFTP).
 
 ### 2. Crear app Python 3.6.15
 1. En cPanel abre `Setup Python App`.
 2. Crea una app nueva con versión `Python 3.6.15`.
-3. Define `Application root` como `sinadef-scrapper`.
+3. Define `Application root` como `sinadef_scrapper`.
 4. Crea/activa el virtualenv que genera cPanel.
+
+### 2.1 Cómo llenar los campos de Setup Python App
+Usa estos valores:
+
+1. `Python version`:
+`3.6.15`
+
+2. `Application root`:
+`sinadef_scrapper` o `sinadef-scrapper` (debe coincidir exactamente con la carpeta real en `/home/TU_USUARIO/`)
+
+3. `Application URL`:
+puedes usar una ruta simple como `tudominio.com/sinadef` (solo para que cPanel monte la app; el proceso real corre por cron)
+
+4. `Application startup file`:
+`passenger_wsgi.py`
+
+5. `Application Entry point`:
+`application`
+
+Archivo requerido para que esto funcione:
+- [passenger_wsgi.py](c:\Experimental\sinadef-scrapper\passenger_wsgi.py)
+
+Si aún no lo subiste al hosting, súbelo junto con `script.py`.
 
 ### 3. Instalar dependencias compatibles con 3.6.15
 1. Abre Terminal en cPanel o conéctate por SSH.
-2. Activa el entorno virtual de la app.
-3. Instala versiones que sí soportan Python 3.6:
+2. Ubica tu usuario y la ruta del virtualenv:
 
 ```bash
-pip install "numpy==1.19.5" "pandas==1.1.5"
+whoami
+ls -la /home/$(whoami)/virtualenv
 ```
 
-Nota: pandas modernos ya no soportan Python 3.6, por eso se fijan esas versiones.
+3. Normalmente cPanel crea algo como:
+   `/home/TU_USUARIO/virtualenv/sinadef_scrapper/3.6/`
+
+4. Activa el entorno virtual (forma detallada):
+
+```bash
+source /home/TU_USUARIO/virtualenv/sinadef_scrapper/3.6/bin/activate
+```
+
+5. Verifica que quedó activo:
+
+```bash
+echo "$VIRTUAL_ENV"
+which python
+python --version
+```
+
+Debes ver:
+- `VIRTUAL_ENV` apuntando al path `.../virtualenv/.../3.6`
+- `python` apuntando al `.../bin/python` del virtualenv
+- versión `Python 3.6.15`
+
+6. Este proyecto ahora usa solo librerías estándar (`csv`, `os`), así que no requiere instalar paquetes externos.
+
+7. Sal del entorno cuando termines:
+
+```bash
+deactivate
+```
 
 ### 4. Probar ejecución manual
 Desde la carpeta del proyecto:
@@ -43,11 +95,40 @@ Verifica que se creen:
 ### 5. Automatizar ejecución (Cron Jobs)
 1. En cPanel abre `Cron Jobs`.
 2. Configura la frecuencia (ejemplo diario 2:00 AM).
-3. Usa un comando como este (ajustando rutas reales de tu cuenta):
+3. Usa este comando (ajustando `TU_USUARIO`):
 
 ```bash
-/home/TU_USUARIO/virtualenv/sinadef-scrapper/3.6/bin/python /home/TU_USUARIO/sinadef-scrapper/script.py >> /home/TU_USUARIO/sinadef-scrapper/cron.log 2>&1
+/bin/bash -lc 'set -euo pipefail; source /home/TU_USUARIO/virtualenv/sinadef_scrapper/3.6/bin/activate; cd /home/TU_USUARIO/sinadef_scrapper; rm -f sinadef.tmp.csv; curl -fL --retry 5 --retry-delay 15 --connect-timeout 60 --max-time 10800 "https://files.minsa.gob.pe/s/a6Hmynsenb7Px2y/download" -o sinadef.tmp.csv; mv -f sinadef.tmp.csv sinadef.csv; python -u script.py' >> /home/TU_USUARIO/sinadef_scrapper/cron.log 2>&1
 ```
+
+Qué hace ese job:
+- Activa el virtualenv de Python 3.6.15.
+- Entra al directorio del proyecto.
+- Llama la URL de `download` y sigue redirecciones automáticamente hasta el contenido final.
+- Lo guarda temporalmente como `sinadef.tmp.csv`.
+- Lo renombra a `sinadef.csv` (reemplazo limpio).
+- Ejecuta `script.py` para regenerar `historic.csv` y `2026.csv`.
+
+Nota: si `curl` no está disponible en tu plan, usa alternativa con `wget`:
+
+```bash
+/bin/bash -lc 'set -euo pipefail; source /home/TU_USUARIO/virtualenv/sinadef_scrapper/3.6/bin/activate; cd /home/TU_USUARIO/sinadef_scrapper; rm -f sinadef.tmp.csv; wget --tries=5 --timeout=60 --waitretry=15 -O sinadef.tmp.csv "https://files.minsa.gob.pe/s/a6Hmynsenb7Px2y/download"; mv -f sinadef.tmp.csv sinadef.csv; python -u script.py' >> /home/TU_USUARIO/sinadef_scrapper/cron.log 2>&1
+```
+
+### 5.1 Recomendaciones por tamaño (600 MB aprox)
+1. Programa el cron en horario de baja carga (madrugada).
+2. Asegura espacio libre antes de correr: al menos 2.5 GB.
+3. Considera que durante la ejecución conviven:
+- `sinadef.tmp.csv` (~600 MB)
+- `sinadef.csv` (~600 MB)
+- `historic.csv` y `2026.csv` (salidas)
+4. Si el hosting es justo de disco, elimina `sinadef.csv` viejo antes de descargar:
+
+```bash
+rm -f sinadef.csv
+```
+
+Esto reduce pico de uso, pero deja una ventana sin archivo si la descarga falla.
 
 ### 6. Validación y operación
 1. Revisa `cron.log` después del primer disparo.
@@ -56,5 +137,5 @@ Verifica que se creen:
 
 ## Checklist de compatibilidad (Python 3.6.15)
 - `script.py` usa sintaxis compatible con 3.6.
-- `pandas==1.1.5` y `numpy==1.19.5` compatibles con 3.6.
-- La estrategia por chunks reduce riesgo de memoria en shared hosting.
+- No depende de `pandas` ni `numpy`.
+- El procesamiento es streaming fila a fila (muy bajo consumo de RAM para archivos grandes).
