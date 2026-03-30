@@ -1,2 +1,2 @@
-numpy==1.19.5
-pandas==1.1.5
+# This project uses only Python standard library modules.
+# Keep this file so `pip install -r requirements.txt` succeeds on the server.

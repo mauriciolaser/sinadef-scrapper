@@ -4,8 +4,17 @@
 - Lee `sinadef.csv` en streaming (fila a fila) para ahorrar RAM.
 - Genera `historic.csv` con todos los registros donde `MUERTE_VIOLENTA == HOMICIDIO`.
 - Genera `2026.csv` con los homicidios donde `ANIO == 2026`.
+- Genera `2026.json` con los homicidios del anio 2026 en formato JSON.
 - En cada ejecución elimina los CSV de salida previos para evitar duplicados.
 - Limpia bytes `NULL` y detecta cabecera/delimitador de forma robusta.
+- Calcula un resumen diario por `FECHA` con homicidios del día más reciente y cambio vs. el día anterior.
+- Al terminar correctamente, intenta enviar un correo desde `no-reply@incaslop.online` a `mauricio@castrovaldez.com` usando `sendmail`.
+
+## Archivos del proyecto
+- `script.py`: procesamiento principal del CSV y envío del resumen por correo.
+- `passenger_wsgi.py`: app mínima para que cPanel monte Python App.
+- `requirements.txt`: archivo intencionalmente vacío de dependencias externas; el proyecto usa librerías estándar.
+- `data.md`: guía explícita de la estructura real de `2026.csv` y tipos de datos esperados.
 
 ## Plan de despliegue en Namecheap Shared (Python 3.6.15)
 
@@ -73,9 +82,17 @@ Debes ver:
 - `python` apuntando al `.../bin/python` del virtualenv
 - versión `Python 3.6.15`
 
-6. Este proyecto ahora usa solo librerías estándar (`csv`, `os`), así que no requiere instalar paquetes externos.
+6. Este proyecto ahora usa solo librerías estándar de Python, así que no requiere instalar paquetes externos.
 
-7. Sal del entorno cuando termines:
+7. Aun así puedes correr el comando estándar para dejar el entorno consistente:
+
+```bash
+pip install -r requirements.txt
+```
+
+Ese comando no instalará paquetes adicionales porque [requirements.txt](c:\Code\Experimental\sinadef-scrapper\requirements.txt) no lista dependencias externas.
+
+8. Sal del entorno cuando termines:
 
 ```bash
 deactivate
@@ -91,6 +108,13 @@ python script.py
 Verifica que se creen:
 - `historic.csv`
 - `2026.csv`
+- `2026.json`
+
+Y revisa en consola:
+- resumen de homicidios procesados
+- fecha más reciente detectada
+- cambio respecto al día anterior
+- estado del envío del correo
 
 ### 5. Automatizar ejecución (Cron Jobs)
 1. En cPanel abre `Cron Jobs`.
@@ -107,7 +131,8 @@ Qué hace ese job:
 - Llama la URL de `download` y sigue redirecciones automáticamente hasta el contenido final.
 - Lo guarda temporalmente como `sinadef.tmp.csv`.
 - Lo renombra a `sinadef.csv` (reemplazo limpio).
-- Ejecuta `script.py` para regenerar `historic.csv` y `2026.csv`.
+- Ejecuta `script.py` para regenerar `historic.csv`, `2026.csv` y `2026.json`.
+- Si el procesamiento termina bien, intenta enviar un correo de resumen del CRON.
 
 Nota: si `curl` no está disponible en tu plan, usa alternativa con `wget`:
 
@@ -132,8 +157,37 @@ Esto reduce pico de uso, pero deja una ventana sin archivo si la descarga falla.
 
 ### 6. Validación y operación
 1. Revisa `cron.log` después del primer disparo.
-2. Confirma fecha de modificación y tamaño de `historic.csv` y `2026.csv`.
-3. Si `sinadef.csv` se reemplaza periódicamente, el script regenerará ambas salidas en limpio.
+2. Confirma fecha de modificación y tamaño de `historic.csv`, `2026.csv` y `2026.json`.
+3. Confirma que el correo llegue a `mauricio@castrovaldez.com`.
+4. Si el correo no sale, revisa si el hosting expone `sendmail` y si permite usar `no-reply@incaslop.online` como remitente.
+5. Si `sinadef.csv` se reemplaza periódicamente, el script regenerará las salidas en limpio.
+
+## Notificación por correo
+
+Cuando el script termina correctamente:
+
+- arma un resumen corto del CRON job
+- calcula los homicidios del día más reciente disponible en el dataset
+- calcula el cambio absoluto contra el día calendario anterior
+- intenta enviar ese resumen por correo usando `sendmail`
+
+Importante:
+
+- si el procesamiento falla, no se envía correo de éxito
+- si falla el correo, el CRON no se cae; el error queda en `cron.log`
+- el remitente configurado en el script es `no-reply@incaslop.online`
+- el destinatario configurado en el script es `mauricio@castrovaldez.com`
+
+## Guía de datos
+
+La estructura del archivo generado `2026.csv` está documentada en [data.md](c:\Code\Experimental\sinadef-scrapper\data.md).
+
+Ahí encontrarás:
+
+- columnas principales
+- tipos sugeridos
+- ejemplos reales del dataset
+- notas para parseo y análisis
 
 ## Checklist de compatibilidad (Python 3.6.15)
 - `script.py` usa sintaxis compatible con 3.6.
