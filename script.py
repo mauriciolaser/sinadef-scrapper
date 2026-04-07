@@ -11,6 +11,7 @@ INPUT_FILE = "sinadef.csv"
 HISTORIC_OUTPUT_FILE = "historic.csv"
 OUTPUT_2026_FILE = "2026.csv"
 OUTPUT_2026_JSON_FILE = "2026.json"
+SUMMARY_STATE_FILE = "summary_state.json"
 MAIL_FROM = "no-reply@incaslop.online"
 MAIL_TO = "mauricio@castrovaldez.com"
 MAIL_SUBJECT = "SINADEF CRON OK - resumen diario"
@@ -89,24 +90,184 @@ def _format_delta(delta):
     return str(delta)
 
 
+def _format_total_with_delta(current_value, delta_value):
+    if delta_value is None:
+        return "{0} (sin base previa)".format(current_value)
+    return "{0} ({1})".format(current_value, _format_delta(delta_value))
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _load_previous_state():
+    if not os.path.exists(SUMMARY_STATE_FILE):
+        return {}
+    try:
+        with open(SUMMARY_STATE_FILE, "r", encoding="utf-8") as state_file:
+            data = json.load(state_file)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_current_state(summary):
+    data = {
+        "saved_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "total_rows": summary["total_rows"],
+        "total_homicidios": summary["total_homicidios"],
+        "total_homicidios_2026": summary["total_homicidios_2026"],
+        "today": summary["today"],
+        "today_count": summary["today_count"],
+        "yesterday": summary["yesterday"],
+        "yesterday_count": summary["yesterday_count"],
+        "latest_date": summary["latest_date"],
+        "latest_count": summary["latest_count"],
+    }
+    with open(SUMMARY_STATE_FILE, "w", encoding="utf-8") as state_file:
+        json.dump(data, state_file, ensure_ascii=False, indent=2)
+
+
 def _build_email_body(summary):
-    latest_date = summary["latest_date"] or "sin fecha"
-    previous_date = summary["previous_date"] or "sin fecha anterior"
+    today = summary["today"]
+    yesterday = summary["yesterday"]
+    total_hist = _format_total_with_delta(
+        summary["total_homicidios"], summary["delta_total_homicidios"]
+    )
+    total_2026 = _format_total_with_delta(
+        summary["total_homicidios_2026"], summary["delta_total_homicidios_2026"]
+    )
+    total_rows = _format_total_with_delta(summary["total_rows"], summary["delta_total_rows"])
 
     return "\n".join(
         (
             "El CRON job de SINADEF termino correctamente y regenero los archivos de salida.",
-            "Resumen: {0} filas procesadas, {1} homicidios historicos, {2} homicidios en 2026.".format(
-                summary["total_rows"],
-                summary["total_homicidios"],
-                summary["total_homicidios_2026"],
-            ),
-            "Homicidios del {0}: {1}".format(latest_date, summary["latest_count"]),
-            "Cambio vs {0}: {1}".format(
-                previous_date,
-                _format_delta(summary["delta"]),
+            "Resumen total:",
+            "- Filas procesadas: {0}".format(total_rows),
+            "- Homicidios historicos: {0}".format(total_hist),
+            "- Homicidios 2026: {0}".format(total_2026),
+            "Resumen diario:",
+            "- Homicidios de hoy ({0}): {1}".format(today, summary["today_count"]),
+            "- Homicidios de ayer ({0}): {1}".format(yesterday, summary["yesterday_count"]),
+            "- Variacion hoy vs ayer: {0}".format(_format_delta(summary["today_vs_yesterday_delta"])),
+            "Ultima fecha con data en el archivo: {0} ({1} homicidios)".format(
+                summary["latest_date"] or "sin fecha",
+                summary["latest_count"],
             ),
         )
+    )
+
+
+def _build_email_html(summary):
+    today = summary["today"]
+    yesterday = summary["yesterday"]
+    total_hist = _format_total_with_delta(
+        summary["total_homicidios"], summary["delta_total_homicidios"]
+    )
+    total_2026 = _format_total_with_delta(
+        summary["total_homicidios_2026"], summary["delta_total_homicidios_2026"]
+    )
+    total_rows = _format_total_with_delta(summary["total_rows"], summary["delta_total_rows"])
+    latest_date = summary["latest_date"] or "sin fecha"
+    latest_count = summary["latest_count"]
+    today_vs_yesterday_delta = _format_delta(summary["today_vs_yesterday_delta"])
+
+    return """\
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SINADEF CRON OK</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,Helvetica,sans-serif;color:#1f2937;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f7fb;padding:16px 8px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:720px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td style="background:#0f172a;color:#ffffff;padding:18px 20px;">
+              <div style="font-size:18px;font-weight:700;line-height:1.3;">SINADEF - Resumen Diario</div>
+              <div style="font-size:13px;opacity:0.9;margin-top:4px;">El CRON termino correctamente y regenero los archivos de salida.</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 20px 6px 20px;">
+              <div style="font-size:14px;font-weight:700;color:#111827;margin-bottom:10px;">Resumen total</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 20px 10px 20px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+                <tr>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;color:#4b5563;">Filas procesadas</td>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;font-weight:700;color:#111827;">{total_rows}</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;color:#4b5563;">Homicidios historicos</td>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;font-weight:700;color:#111827;">{total_hist}</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;color:#4b5563;">Homicidios 2026</td>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;font-weight:700;color:#111827;">{total_2026}</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 20px 6px 20px;">
+              <div style="font-size:14px;font-weight:700;color:#111827;margin-bottom:10px;">Resumen diario</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 20px 12px 20px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+                <tr>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;color:#4b5563;">Homicidios de hoy ({today})</td>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;font-weight:700;color:#111827;">{today_count}</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;color:#4b5563;">Homicidios de ayer ({yesterday})</td>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;font-weight:700;color:#111827;">{yesterday_count}</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;color:#4b5563;">Variacion hoy vs ayer</td>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;font-weight:700;color:#111827;">{today_vs_yesterday_delta}</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;color:#4b5563;">Ultima fecha con data</td>
+                  <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;font-weight:700;color:#111827;">{latest_date} ({latest_count})</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:10px 20px 18px 20px;font-size:12px;color:#6b7280;">
+              Este correo se genero automaticamente por el CRON de SINADEF.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+""".format(
+        total_rows=total_rows,
+        total_hist=total_hist,
+        total_2026=total_2026,
+        today=today,
+        today_count=summary["today_count"],
+        yesterday=yesterday,
+        yesterday_count=summary["yesterday_count"],
+        today_vs_yesterday_delta=today_vs_yesterday_delta,
+        latest_date=latest_date,
+        latest_count=latest_count,
     )
 
 
@@ -121,12 +282,16 @@ def _sendmail_command():
 
 
 def enviar_correo_resumen(summary):
+    plain_body = _build_email_body(summary)
+    html_body = _build_email_html(summary)
+
     message = EmailMessage()
     message["Subject"] = MAIL_SUBJECT
     message["From"] = MAIL_FROM
     message["To"] = MAIL_TO
     message["Reply-To"] = MAIL_FROM
-    message.set_content(_build_email_body(summary))
+    message.set_content(plain_body)
+    message.add_alternative(html_body, subtype="html")
 
     sendmail_command = _sendmail_command()
     process = subprocess.Popen(sendmail_command, stdin=subprocess.PIPE)
@@ -216,9 +381,63 @@ def procesar():
     summary = _build_summary(
         total_rows, total_homicidios, total_homicidios_2026, counts_by_date
     )
+    previous_state = _load_previous_state()
+    previous_total_rows = _safe_int(previous_state.get("total_rows"))
+    previous_total_homicidios = _safe_int(previous_state.get("total_homicidios"))
+    previous_total_homicidios_2026 = _safe_int(previous_state.get("total_homicidios_2026"))
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    today_count = counts_by_date.get(today, 0)
+    yesterday_count = counts_by_date.get(yesterday, 0)
+
+    summary["today"] = today
+    summary["yesterday"] = yesterday
+    summary["today_count"] = today_count
+    summary["yesterday_count"] = yesterday_count
+    summary["today_vs_yesterday_delta"] = today_count - yesterday_count
+    summary["delta_total_rows"] = (
+        None if previous_total_rows is None else total_rows - previous_total_rows
+    )
+    summary["delta_total_homicidios"] = (
+        None
+        if previous_total_homicidios is None
+        else total_homicidios - previous_total_homicidios
+    )
+    summary["delta_total_homicidios_2026"] = (
+        None
+        if previous_total_homicidios_2026 is None
+        else total_homicidios_2026 - previous_total_homicidios_2026
+    )
+
+    _save_current_state(summary)
+
     print("OK historic.csv generado con homicidios (todos los anios): {0}".format(total_homicidios))
     print("OK 2026.csv generado con homicidios del anio 2026: {0}".format(total_homicidios_2026))
     print("OK 2026.json generado con homicidios del anio 2026: {0}".format(total_homicidios_2026))
+    print(
+        "OK comparativa historico: {0}".format(
+            _format_total_with_delta(
+                summary["total_homicidios"], summary["delta_total_homicidios"]
+            )
+        )
+    )
+    print(
+        "OK comparativa 2026: {0}".format(
+            _format_total_with_delta(
+                summary["total_homicidios_2026"], summary["delta_total_homicidios_2026"]
+            )
+        )
+    )
+    print(
+        "OK hoy ({0}): {1} | ayer ({2}): {3} | delta: {4}".format(
+            summary["today"],
+            summary["today_count"],
+            summary["yesterday"],
+            summary["yesterday_count"],
+            _format_delta(summary["today_vs_yesterday_delta"]),
+        )
+    )
     if summary["latest_date"]:
         print(
             "OK resumen diario: {0} homicidios el {1} ({2} vs {3})".format(
@@ -237,7 +456,12 @@ if __name__ == "__main__":
     try:
         email_message = enviar_correo_resumen(result)
         print("OK correo enviado a {0} desde {1}".format(MAIL_TO, MAIL_FROM))
-        print(email_message.get_content().rstrip())
+        plain_part = next(
+            (p for p in email_message.walk() if p.get_content_type() == "text/plain"),
+            None,
+        )
+        if plain_part is not None:
+            print(plain_part.get_payload(decode=True).decode("utf-8", errors="replace").rstrip())
     except Exception as exc:
         print(
             "WARNING el CRON job termino, pero fallo el envio del correo: {0}".format(

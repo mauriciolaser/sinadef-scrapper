@@ -8,6 +8,7 @@
 - En cada ejecución elimina los CSV de salida previos para evitar duplicados.
 - Limpia bytes `NULL` y detecta cabecera/delimitador de forma robusta.
 - Calcula un resumen diario por `FECHA` con homicidios del día más reciente y cambio vs. el día anterior.
+- Guarda un estado de la ejecución previa en `summary_state.json` para reportar variaciones de totales entre corridas (pueden subir o bajar).
 - Al terminar correctamente, intenta enviar un correo desde `no-reply@incaslop.online` a `mauricio@castrovaldez.com` usando `sendmail`.
 
 ## Archivos del proyecto
@@ -15,6 +16,7 @@
 - `passenger_wsgi.py`: app mínima para que cPanel monte Python App.
 - `requirements.txt`: archivo intencionalmente vacío de dependencias externas; el proyecto usa librerías estándar.
 - `data.md`: guía explícita de la estructura real de `2026.csv` y tipos de datos esperados.
+- `summary_state.json`: estado mínimo de la corrida anterior para calcular variaciones.
 
 ## Plan de despliegue en Namecheap Shared (Python 3.6.15)
 
@@ -118,27 +120,26 @@ Y revisa en consola:
 
 ### 5. Automatizar ejecución (Cron Jobs)
 1. En cPanel abre `Cron Jobs`.
-2. Configura la frecuencia (ejemplo diario 2:00 AM).
-3. Usa este comando (ajustando `TU_USUARIO`):
+2. Sube también `run_cron.sh` al proyecto y marca permisos ejecutables en hosting:
 
 ```bash
-/bin/bash -lc 'set -euo pipefail; source /home/TU_USUARIO/virtualenv/sinadef_scrapper/3.6/bin/activate; cd /home/TU_USUARIO/sinadef_scrapper; rm -f sinadef.tmp.csv; curl -fL --retry 5 --retry-delay 15 --connect-timeout 60 --max-time 10800 "https://files.minsa.gob.pe/s/a6Hmynsenb7Px2y/download" -o sinadef.tmp.csv; mv -f sinadef.tmp.csv sinadef.csv; python -u script.py' >> /home/TU_USUARIO/sinadef_scrapper/cron.log 2>&1
+chmod +x /home/TU_USUARIO/sinadef_scrapper/run_cron.sh
 ```
 
-Qué hace ese job:
+3. Configura la frecuencia (ejemplo diario 2:00 AM).
+4. Usa este comando:
+
+```bash
+/bin/bash -lc '/home/TU_USUARIO/sinadef_scrapper/run_cron.sh' >> /home/TU_USUARIO/sinadef_scrapper/cron.log 2>&1
+```
+
+Qué hace `run_cron.sh`:
 - Activa el virtualenv de Python 3.6.15.
-- Entra al directorio del proyecto.
-- Llama la URL de `download` y sigue redirecciones automáticamente hasta el contenido final.
-- Lo guarda temporalmente como `sinadef.tmp.csv`.
-- Lo renombra a `sinadef.csv` (reemplazo limpio).
+- Descarga con `curl` en modo robusto para archivos grandes (`--retry`, `--continue-at -`, `--max-time` amplio).
+- Reanuda una descarga parcial si quedó `sinadef.tmp.csv` de un intento fallido.
+- Valida tamaño mínimo y cabecera del CSV antes de reemplazar `sinadef.csv`.
 - Ejecuta `script.py` para regenerar `historic.csv`, `2026.csv` y `2026.json`.
-- Si el procesamiento termina bien, intenta enviar un correo de resumen del CRON.
-
-Nota: si `curl` no está disponible en tu plan, usa alternativa con `wget`:
-
-```bash
-/bin/bash -lc 'set -euo pipefail; source /home/TU_USUARIO/virtualenv/sinadef_scrapper/3.6/bin/activate; cd /home/TU_USUARIO/sinadef_scrapper; rm -f sinadef.tmp.csv; wget --tries=5 --timeout=60 --waitretry=15 -O sinadef.tmp.csv "https://files.minsa.gob.pe/s/a6Hmynsenb7Px2y/download"; mv -f sinadef.tmp.csv sinadef.csv; python -u script.py' >> /home/TU_USUARIO/sinadef_scrapper/cron.log 2>&1
-```
+- Si falla cualquier etapa, envía correo de error a `mauricio@castrovaldez.com` con etapa y código de salida.
 
 ### 5.1 Recomendaciones por tamaño (600 MB aprox)
 1. Programa el cron en horario de baja carga (madrugada).
@@ -167,16 +168,19 @@ Esto reduce pico de uso, pero deja una ventana sin archivo si la descarga falla.
 Cuando el script termina correctamente:
 
 - arma un resumen corto del CRON job
-- calcula los homicidios del día más reciente disponible en el dataset
-- calcula el cambio absoluto contra el día calendario anterior
+- reporta homicidios históricos y homicidios 2026 con variación vs la corrida anterior (ejemplo `13087 (+2)` o `13087 (-2)`)
+- reporta homicidios de hoy y de ayer según fecha calendario del servidor
+- reporta variación hoy vs ayer
+- reporta también la última fecha con data disponible en el CSV
 - intenta enviar ese resumen por correo usando `sendmail`
 
 Importante:
 
-- si el procesamiento falla, no se envía correo de éxito
-- si falla el correo, el CRON no se cae; el error queda en `cron.log`
-- el remitente configurado en el script es `no-reply@incaslop.online`
-- el destinatario configurado en el script es `mauricio@castrovaldez.com`
+- si `script.py` termina bien, envía correo de resumen (éxito)
+- si falla cualquier etapa del CRON (descarga, validación, reemplazo o ejecución), `run_cron.sh` envía correo de error
+- si falla el correo, el CRON mantiene el registro del error en `cron.log`
+- el remitente configurado es `no-reply@incaslop.online`
+- el destinatario configurado es `mauricio@castrovaldez.com`
 
 ## Guía de datos
 
