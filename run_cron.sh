@@ -48,12 +48,16 @@
 #   MIN_FILE_BYTES       Tamano minimo aceptable del CSV descargado (bytes)
 #   DOWNLOAD_MAX_ATTEMPTS Numero maximo de intentos de descarga
 #   DOWNLOAD_RETRY_WAIT  Segundos de espera entre intentos de descarga
+#   CURL_USER_AGENT      User-Agent enviado al endpoint de descarga
+#   CURL_ACCEPT          Header Accept para la descarga
+#   CURL_ACCEPT_LANGUAGE Header Accept-Language para la descarga
+#   CURL_REFERER         Header Referer para la descarga
 #
 set -Eeuo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/home/vallhzty/sinadef_scrapper}"
 VENV_ACTIVATE="${VENV_ACTIVATE:-/home/vallhzty/virtualenv/sinadef_scrapper/3.6/bin/activate}"
-DOWNLOAD_URL="${DOWNLOAD_URL:-https://files.minsa.gob.pe/s/a6Hmynsenb7Px2y/download}"
+DOWNLOAD_URL="${DOWNLOAD_URL:-https://files.minsa.gob.pe/s/a6Hmynsenb7Px2y/download?path=&files=SINADEF_DATOS_ABIERTOS.csv}"
 TMP_FILE="${TMP_FILE:-$PROJECT_DIR/sinadef.tmp.csv}"
 TARGET_FILE="${TARGET_FILE:-$PROJECT_DIR/sinadef.csv}"
 LOG_FILE="${LOG_FILE:-$PROJECT_DIR/cron.log}"
@@ -64,6 +68,10 @@ MAIL_SUBJECT_ERROR="${MAIL_SUBJECT_ERROR:-SINADEF CRON ERROR}"
 MIN_FILE_BYTES="${MIN_FILE_BYTES:-1000000}"
 DOWNLOAD_MAX_ATTEMPTS="${DOWNLOAD_MAX_ATTEMPTS:-5}"
 DOWNLOAD_RETRY_WAIT="${DOWNLOAD_RETRY_WAIT:-120}"
+CURL_USER_AGENT="${CURL_USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36}"
+CURL_ACCEPT="${CURL_ACCEPT:-text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8}"
+CURL_ACCEPT_LANGUAGE="${CURL_ACCEPT_LANGUAGE:-es-PE,es;q=0.9,en;q=0.8}"
+CURL_REFERER="${CURL_REFERER:-https://files.minsa.gob.pe/}"
 
 CURRENT_STAGE="init"
 
@@ -164,6 +172,11 @@ while [ "$download_attempt" -lt "$DOWNLOAD_MAX_ATTEMPTS" ]; do
     --max-time 21600 \
     --speed-time 300 \
     --speed-limit 1024 \
+    --http1.1 \
+    -A "$CURL_USER_AGENT" \
+    -H "Accept: $CURL_ACCEPT" \
+    -H "Accept-Language: $CURL_ACCEPT_LANGUAGE" \
+    -H "Referer: $CURL_REFERER" \
     "$DOWNLOAD_URL" \
     -o "$TMP_FILE" || curl_exit=$?
 
