@@ -63,12 +63,12 @@ ls -la /home/$(whoami)/virtualenv
 ```
 
 3. Normalmente cPanel crea algo como:
-   `/home/TU_USUARIO/virtualenv/sinadef_scrapper/3.6/`
+   `/home/vallhzty/virtualenv/sinadef_scrapper/3.6/`
 
 4. Activa el entorno virtual (forma detallada):
 
 ```bash
-source /home/TU_USUARIO/virtualenv/sinadef_scrapper/3.6/bin/activate
+source /home/vallhzty/virtualenv/sinadef_scrapper/3.6/bin/activate
 ```
 
 5. Verifica que quedó activo:
@@ -123,7 +123,7 @@ Y revisa en consola:
 2. Sube también `run_cron.sh` al proyecto y marca permisos ejecutables en hosting:
 
 ```bash
-chmod +x /home/TU_USUARIO/sinadef_scrapper/run_cron.sh
+chmod +x /home/vallhzty/sinadef_scrapper/run_cron.sh
 ```
 
 3. Configura la frecuencia (ejemplo diario 2:00 AM).
